@@ -5,29 +5,10 @@ This is the Official Repository of "Learning Few-Step Diffusion Models by Trajec
 
 Our proposed TDM can be easily extended to text-to-video.
 
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-  .gif-container {
-    display: flex;
-    justify-content: space-around;
-  }
-  .gif-container img {
-    max-width: 45%; /* 根据需要调整宽度 */
-    height: auto;
-  }
-</style>
-</head>
-<body>
-
-<div class="gif-container">
-  <img src="teacher.gif" alt="Teacher GIF">
-  <img src="student.gif" alt="Student GIF">
-</div>
-
-</body>
-</html>
+<p align="center">
+  <img src="teacher.gif" alt="Teacher" width="45%">
+  <img src="student.gif" alt="Student" width="45%">
+</p>
 
 
 ![teacher](teacher.gif)

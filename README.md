@@ -1,6 +1,9 @@
 # TDM: Learning Few-Step Diffusion Models by Trajectory Distribution Matching
 This is the Official Repository of "Learning Few-Step Diffusion Models by Trajectory Distribution Matching", by *Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, Jing Tang*.
 
+## User Study Time!
+![user_study](user_study.png)
+
 ## Fast Text-to-Video Geneartion
 
 Our proposed TDM can be easily extended to text-to-video.

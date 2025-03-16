@@ -39,8 +39,8 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from diffusers.utils import make_image_grid
 pipe = StableDiffusion3Pipeline.from_pretrained("stabilityai/stable-diffusion-3-medium-diffusers", torch_dtype=torch.float16).to("cuda")
-pipe.load_lora_weights('Luo-Yihong/TDM_sd3_lora') # Load LoRA
-pipe.fuse_lora(lora_scale = 0.125) # IMPORTANT. Please set LoRA scale to 0.125.
+pipe.load_lora_weights('Luo-Yihong/TDM_sd3_lora', adapter_name = 'tdm') # Load TDM-LoRA
+pipe.set_adapters(["tdm"], [0.125])# IMPORTANT. Please set LoRA scale to 0.125.
 pipe.vae = AutoencoderTiny.from_pretrained("madebyollin/taesd3", torch_dtype=torch.float16) # Save GPU memory.
 pipe.vae.config.shift_factor = 0.0
 pipe = pipe.to("cuda")

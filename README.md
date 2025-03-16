@@ -4,9 +4,9 @@
   <a href="https://arxiv.org/abs/2503.06674"><img src="https://img.shields.io/static/v1?label=Paper&message=Arxiv:TDM&color=red&logo=arxiv"></a> &ensp;
 </div>
 
-[**Few-Step Student Surpasses the Teacher Diffusion Model in a Free Image/Video Approach!**]
-
 This is the Official Repository of "[Learning Few-Step Diffusion Models by Trajectory Distribution Matching](https://arxiv.org/abs/2503.06674)", by *Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, Jing Tang*.
+
+🚀🚀🚀[**Few-Step Student Surpasses the Teacher Diffusion Model in an Image/Video-Free Way!**]
 
 
 ## User Study Time!

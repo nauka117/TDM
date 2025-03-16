@@ -101,14 +101,11 @@ image
 ```
 ![user_study](assets/tdm_dreamshaper.jpg)
 
-## Pre-trained Models
+## 🔥 Pre-trained Models
 We release a bucket of TDM-LoRA. Please enjoy it!
 - [TDM-sd3-LoRA](https://huggingface.co/Luo-Yihong/TDM_sd3_lora)
 - [TDM-CogVideoX-1.5B-LoRA](https://huggingface.co/Luo-Yihong/TDM_CogVideoX-1.5B_LoRA)
 - [TDM-dreamshaper-LoRA](https://huggingface.co/Luo-Yihong/TDM_dreamshaper_LoRA)
-
-## 🔥TODO 
-- Pre-trained Models will be released soon.
 
 ## Contact
 

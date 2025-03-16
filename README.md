@@ -101,6 +101,36 @@ image
 ```
 ![user_study](assets/tdm_dreamshaper.jpg)
 
+## TDM-CogVideoX-2B-LoRA
+```python
+import torch
+from diffusers import CogVideoXPipeline
+from diffusers.utils import export_to_video
+pipe = CogVideoXPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.float16)
+pipe.vae.enable_slicing() # Save memory
+pipe.vae.enable_tiling() # Save memory
+pipe.load_lora_weights("Luo-Yihong/TDM_CogVideoX-2B_LoRA")
+pipe.to("cuda")
+prompt = (
+    "A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. The "
+    "panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other "
+    "pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, "
+    "casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. "
+    "The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical "
+    "atmosphere of this unique musical performance"
+)
+# We train the generator on timesteps [999, 856, 665, 399].
+# The offical scheduler of CogVideo-X using uniform spacing, may cause inferior results.
+# But TDM-LoRA still work goods under 4 NFE.
+# We will update the TDM-CogVideoX-LoRA soon for better performance!
+generator = torch.manual_seed(8888)
+frames = pipe(prompt, guidance_scale=1, 
+              num_inference_steps=4, 
+              num_frames=49,
+              generator = generator,
+              use_dynamic_cfg=True).frames[0]
+export_to_video(frames, "output-TDM.mp4", fps=8)
+```
 ## 🔥 Pre-trained Models
 We release a bucket of TDM-LoRA. Please enjoy it!
 - [TDM-sd3-LoRA](https://huggingface.co/Luo-Yihong/TDM_sd3_lora)

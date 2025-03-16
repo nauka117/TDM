@@ -127,8 +127,7 @@ generator = torch.manual_seed(8888)
 frames = pipe(prompt, guidance_scale=1, 
               num_inference_steps=4, 
               num_frames=49,
-              generator = generator,
-              use_dynamic_cfg=True).frames[0]
+              generator = generator).frames[0]
 export_to_video(frames, "output-TDM.mp4", fps=8)
 ```
 ## 🔥 Pre-trained Models

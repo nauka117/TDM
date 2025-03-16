@@ -120,8 +120,8 @@ prompt = (
     "atmosphere of this unique musical performance"
 )
 # We train the generator on timesteps [999, 856, 665, 399].
-# The offical scheduler of CogVideo-X using uniform spacing, may cause inferior results.
-# But TDM-LoRA still work goods under 4 NFE.
+# The official scheduler of CogVideo-X using uniform spacing, may cause inferior results.
+# But TDM-LoRA still works well under 4 NFE.
 # We will update the TDM-CogVideoX-LoRA soon for better performance!
 generator = torch.manual_seed(8888)
 frames = pipe(prompt, guidance_scale=1, 

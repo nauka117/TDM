@@ -134,7 +134,7 @@ export_to_video(frames, "output-TDM.mp4", fps=8)
 ## 🔥 Pre-trained Models
 We release a bucket of TDM-LoRA. Please enjoy it!
 - [TDM-sd3-LoRA](https://huggingface.co/Luo-Yihong/TDM_sd3_lora)
-- [TDM-CogVideoX-1.5B-LoRA](https://huggingface.co/Luo-Yihong/TDM_CogVideoX-1.5B_LoRA)
+- [TDM-CogVideoX-2B-LoRA]([https://huggingface.co/Luo-Yihong/TDM_CogVideoX-1.5B_LoRA](https://huggingface.co/Luo-Yihong/TDM_CogVideoX-2B_LoRA))
 - [TDM-dreamshaper-LoRA](https://huggingface.co/Luo-Yihong/TDM_dreamshaper_LoRA)
 
 ## Contact

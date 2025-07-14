@@ -9,9 +9,9 @@ This is the Official Repository of "[Learning Few-Step Diffusion Models by Traje
 🚀🚀🚀[**Few-Step Student Surpasses the Teacher Diffusion Model in an Image/Video-Free Way!**]
 
   
-## News
-- 🔥We release the most compact demo of training TDM on PixArt-512. The usage of the training demo will be updated soon.
-- 🚀TDM is accepted to ICCV 2025!
+## 🔥News
+- (2025/07) We release the most compact demo of training TDM on PixArt-512. 
+- (2025/06) TDM is accepted to ICCV 2025 🎉!
 
 
 ## User Study Time!
@@ -143,6 +143,45 @@ We release a bucket of TDM-LoRA. Please enjoy it!
 - [TDM-CogVideoX-2B-LoRA](https://huggingface.co/Luo-Yihong/TDM_CogVideoX-2B_LoRA)
 - [TDM-Dreamshaper-LoRA](https://huggingface.co/Luo-Yihong/TDM_dreamshaper_LoRA)
 
+
+## Training
+
+### Prepare data
+
+The training of TDM is image-free, we just need prompts. You may obtain prompts from open-source datasets, such as [JourneyDB](https://github.com/JourneyDB/JourneyDB).
+
+### Run the script for training
+
+You can run the training script as follows:
+
+```
+accelerate launch \
+  --main_process_port 29503 \
+  --num_processes=2 \
+  --mixed_precision=fp16 \
+  train_open_tdm.py \
+  --train_batch_size=16 \
+  --gradient_accumulation_steps=1 \
+  --gradient_checkpointing \
+  --max_train_steps=10001 \
+  --learning_rate=2e-05 \
+  --max_grad_norm=1 \
+  --enable_xformers_memory_efficient_attention \
+  --lambda_kl 0 \
+  --use_8bit_adam \
+  --cfg 4.5 \
+  --total_steps 900 \
+  --lr_scheduler cosine_with_restarts \
+  --lr_warmup_steps 50 \
+  --use_huber \
+  --use_separate
+  
+```
+
+We suggest two mode of adding noise: 
+
+1)  t ~ [t_k, t_{k+1}]. This fully separate diffusing interval among steps.
+2)  t ~ [t_k, T]. We suggest add steps as a condition in fake score in this approach. However, without steps as condition can also work well for TDM. This is because the last diffusing interval [0, t_1] does not shared among steps in TDM's case.
 
 ## Contact
 

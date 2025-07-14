@@ -167,7 +167,6 @@ accelerate launch \
   --learning_rate=2e-05 \
   --max_grad_norm=1 \
   --enable_xformers_memory_efficient_attention \
-  --lambda_kl 0 \
   --use_8bit_adam \
   --cfg 4.5 \
   --total_steps 900 \

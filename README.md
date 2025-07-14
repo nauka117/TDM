@@ -160,7 +160,7 @@ accelerate launch \
   --num_processes=2 \
   --mixed_precision=fp16 \
   train_tdm_demo.py \
-  --train_batch_size=16 \
+  --train_batch_size=$bsz \
   --gradient_accumulation_steps=1 \
   --gradient_checkpointing \
   --max_train_steps=10001 \

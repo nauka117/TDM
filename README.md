@@ -10,7 +10,7 @@ This is the Official Repository of "[Learning Few-Step Diffusion Models by Traje
 
   
 ## News
-- 🔥We release the most compact demo of training TDM on PixArt-512. The usage of training demo will be updated soon.
+- 🔥We release the most compact demo of training TDM on PixArt-512. The usage of the training demo will be updated soon.
 - 🚀TDM is accepted to ICCV 2025!
 
 

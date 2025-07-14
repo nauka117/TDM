@@ -159,7 +159,7 @@ accelerate launch \
   --main_process_port 29503 \
   --num_processes=2 \
   --mixed_precision=fp16 \
-  train_open_tdm.py \
+  train_tdm_demo.py \
   --train_batch_size=16 \
   --gradient_accumulation_steps=1 \
   --gradient_checkpointing \

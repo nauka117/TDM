@@ -1,6 +1,3 @@
-# Latest modify: uncondprompt -> neg prompt; end timesteps from 999 to 949
-# Train generator with 4 steps, the fake score is conditioned on steps.
-# Timesteps-mid is sampled from [0, timesteps_g]
 #!/usr/bin/env python
 # coding=utf-8
 # Copyright 2023 The HuggingFace Inc. team. All rights reserved.

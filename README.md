@@ -8,6 +8,11 @@ This is the Official Repository of "[Learning Few-Step Diffusion Models by Traje
 
 🚀🚀🚀[**Few-Step Student Surpasses the Teacher Diffusion Model in an Image/Video-Free Way!**]
 
+  
+## News
+- 🔥We release the most compact demo of training TDM on PixArt-512. The usage of training demo will be updated soon.
+- 🚀TDM is accepted to ICCV 2025!
+
 
 ## User Study Time!
 ![user_study](assets/user_study.jpg)
@@ -137,9 +142,6 @@ We release a bucket of TDM-LoRA. Please enjoy it!
 - [TDM-SD3-LoRA](https://huggingface.co/Luo-Yihong/TDM_sd3_lora)
 - [TDM-CogVideoX-2B-LoRA](https://huggingface.co/Luo-Yihong/TDM_CogVideoX-2B_LoRA)
 - [TDM-Dreamshaper-LoRA](https://huggingface.co/Luo-Yihong/TDM_dreamshaper_LoRA)
-  
-## 🔥 TO-DO
-- Release the training code.
 
 
 ## Contact

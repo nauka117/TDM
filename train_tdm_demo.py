@@ -13,8 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 import os
-from diffusers import PixArtAlphaPipeline
-
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 import argparse
 import logging
@@ -134,10 +132,6 @@ if is_wandb_available():
 check_min_version("0.26.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
-
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
 
 
 def predicted_origin(model_output, timesteps, sample, prediction_type, alphas, sigmas):
@@ -1168,8 +1162,6 @@ def main():
                     noisy_model_latents = predictor.add_noise(noisy_model_latents_ode, torch.randn_like(noisy_model_latents_ode), timesteps_mid, timesteps).to(torch.float16)
                     snr = compute_snr(noise_scheduler, timesteps)
                     coop_samples = model_latents.detach().clone()
-                    steps = 1
-                    delta_t = (timesteps - 100) // steps
                     cfg = args.cfg
                     with torch.no_grad():
                         sd_eps, sd_latents = predictor.predict(unet_sd, noisy_model_latents, timesteps,

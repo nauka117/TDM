@@ -177,7 +177,7 @@ accelerate launch \
   
 ```
 
-We suggest two mode of adding noise: 
+We suggest two modes of adding noise: 
 
 1)  t ~ [t_k, t_{k+1}]. This fully separate diffusing interval among steps.
 2)  t ~ [t_k, T]. We suggest add steps as a condition in fake score in this approach. However, without steps as condition can also work well for TDM. This is because the last diffusing interval [0, t_1] does not shared among steps in TDM's case.

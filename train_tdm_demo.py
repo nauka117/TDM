@@ -1136,7 +1136,7 @@ def main():
                 optimizer_d.step()
                 optimizer_d.zero_grad()
 
-                # Train the One-Step Unet generator
+                # Train the Few-Step Unet generator
                 if global_step % 1 == 0:
                     ind_t = torch.randint(1, 5, (bsz,),
                                               device=noise.device).long()

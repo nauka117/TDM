@@ -4,7 +4,7 @@
   <a href="https://arxiv.org/abs/2503.06674"><img src="https://img.shields.io/static/v1?label=Paper&message=ICCV:TDM&color=red&logo=ICCV"></a> &ensp;
 </div>
 
-This is the Official Repository of "[Learning Few-Step Diffusion Models by Trajectory Distribution Matching](https://arxiv.org/abs/2503.06674)", by *Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, Jing Tang*.
+This is the forked Repository of "[Learning Few-Step Diffusion Models by Trajectory Distribution Matching](https://arxiv.org/abs/2503.06674)", by *Yihong Luo, Tianyang Hu, Jiacheng Sun, Yujun Cai, Jing Tang*.
 
 🚀🚀🚀[**Few-Step Student Surpasses the Teacher Diffusion Model in an Image/Video-Free Way!**]
 

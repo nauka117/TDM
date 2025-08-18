@@ -19,6 +19,91 @@ import os
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    
+
+    parser.add_argument(
+        "--ae",
+        type=str,
+        default="WFVAEModel_D8_4x8x8",
+        help="VAE model configuration for Open-Sora",
+    )
+    parser.add_argument(
+        "--ae_path",
+        type=str,
+        default="LanguageBind/Open-Sora-Plan-v1.3.0",
+        help="Path to VAE model",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="OpenSoraT2V_v1_3_93x640x640",
+        help="Diffusion model configuration for Open-Sora",
+    )
+    parser.add_argument(
+        "--text_encoder_name_1",
+        type=str,
+        default="google/t5-v1_1-xl",
+        help="First text encoder for Open-Sora",
+    )
+    parser.add_argument(
+        "--text_encoder_name_2",
+        type=str,
+        default="openai/clip-vit-large-patch14",
+        help="Second text encoder for Open-Sora (optional)",
+    )
+    parser.add_argument(
+        "--num_frames",
+        type=int,
+        default=93,
+        help="Number of frames for video generation",
+    )
+    parser.add_argument(
+        "--max_height",
+        type=int,
+        default=640,
+        help="Maximum height for video generation",
+    )
+    parser.add_argument(
+        "--max_width",
+        type=int,
+        default=640,
+        help="Maximum width for video generation",
+    )
+    parser.add_argument(
+        "--interpolation_scale_h",
+        type=float,
+        default=1.0,
+        help="Horizontal interpolation scale",
+    )
+    parser.add_argument(
+        "--interpolation_scale_w",
+        type=float,
+        default=1.0,
+        help="Vertical interpolation scale",
+    )
+    parser.add_argument(
+        "--interpolation_scale_t",
+        type=float,
+        default=1.0,
+        help="Temporal interpolation scale",
+    )
+    parser.add_argument(
+        "--sparse1d",
+        action="store_true",
+        help="Use sparse 1D attention",
+    )
+    parser.add_argument(
+        "--sparse_n",
+        type=int,
+        default=2,
+        help="Sparse attention parameter",
+    )
+    parser.add_argument(
+        "--skip_connection",
+        action="store_true",
+        help="Use skip connections",
+    )
+    
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
@@ -38,6 +123,97 @@ def parse_args():
         default=None,
         help="Variant of the model files of the pretrained model identifier from huggingface.co/models, 'e.g.' fp16",
     )
+    
+    # Open-Sora specific arguments
+    parser.add_argument(
+        "--use_opensora",
+        action="store_true",
+        help="Use Open-Sora architecture instead of PixArt",
+    )
+    parser.add_argument(
+        "--ae",
+        type=str,
+        default="WFVAEModel_D8_4x8x8",
+        help="VAE model configuration for Open-Sora",
+    )
+    parser.add_argument(
+        "--ae_path",
+        type=str,
+        default="LanguageBind/Open-Sora-Plan-v1.3.0",
+        help="Path to VAE model",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="OpenSoraT2V_v1_3_93x640x640",
+        help="Diffusion model configuration for Open-Sora",
+    )
+    parser.add_argument(
+        "--text_encoder_name_1",
+        type=str,
+        default="google/t5-v1_1-xl",
+        help="First text encoder for Open-Sora",
+    )
+    parser.add_argument(
+        "--text_encoder_name_2",
+        type=str,
+        default="openai/clip-vit-large-patch14",
+        help="Second text encoder for Open-Sora (optional)",
+    )
+    parser.add_argument(
+        "--num_frames",
+        type=int,
+        default=93,
+        help="Number of frames for video generation",
+    )
+    parser.add_argument(
+        "--max_height",
+        type=int,
+        default=640,
+        help="Maximum height for video generation",
+    )
+    parser.add_argument(
+        "--max_width",
+        type=int,
+        default=640,
+        help="Maximum width for video generation",
+    )
+    parser.add_argument(
+        "--interpolation_scale_h",
+        type=float,
+        default=1.0,
+        help="Horizontal interpolation scale",
+    )
+    parser.add_argument(
+        "--interpolation_scale_w",
+        type=float,
+        default=1.0,
+        help="Vertical interpolation scale",
+    )
+    parser.add_argument(
+        "--interpolation_scale_t",
+        type=float,
+        default=1.0,
+        help="Temporal interpolation scale",
+    )
+    parser.add_argument(
+        "--sparse1d",
+        action="store_true",
+        help="Use sparse 1D attention",
+    )
+    parser.add_argument(
+        "--sparse_n",
+        type=int,
+        default=2,
+        help="Sparse attention parameter",
+    )
+    parser.add_argument(
+        "--skip_connection",
+        action="store_true",
+        help="Use skip connections",
+    )
+    
+    # Original TDM arguments
     parser.add_argument(
         "--dataset_name",
         type=str,
@@ -101,7 +277,9 @@ def parse_args():
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="A seed for reproducible training."
+    )
     parser.add_argument(
         "--resolution",
         type=int,
@@ -134,6 +312,30 @@ def parse_args():
         type=int,
         default=None,
         help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
+    )
+    parser.add_argument(
+        "--checkpointing_steps",
+        type=int,
+        default=500,
+        help=(
+            "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
+            " training using `--resume_from_checkpoint`."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoints_total_limit",
+        type=int,
+        default=None,
+        help=("Max number of checkpoints to store."),
+    )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Whether training should be resumed from a previous checkpoint. Use a path saved by"
+            ' `--checkpointing_steps`, or `"latest"` to automatically select the last available checkpoint.'
+        ),
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
@@ -171,33 +373,13 @@ def parse_args():
         "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
-        "--snr_gamma",
-        type=float,
-        default=None,
-        help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
-        "More details here: https://arxiv.org/abs/2303.09556.",
+        "--lr_num_cycles",
+        type=int,
+        default=1,
+        help="Number of hard resets of the lr in cosine_with_restarts scheduler.",
     )
     parser.add_argument(
-        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
-    )
-    parser.add_argument(
-        "--allow_tf32",
-        action="store_true",
-        help=(
-            "Whether or not to allow TF32 on Ampere GPUs. This can speed up training on Ampere GPUs and is only"
-            " used in mixed precision training."
-        ),
-    )
-    parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA model.")
-    parser.add_argument(
-        "--non_ema_revision",
-        type=str,
-        default=None,
-        required=False,
-        help=(
-            "Revision of pretrained non-ema model identifier. Must be a branch, tag or git identifier of the local or"
-            " remote repository specified with --pretrained_model_name_or_path."
-        ),
+        "--lr_power", type=float, default=1.0, help="Power factor of the polynomial scheduler."
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -206,6 +388,9 @@ def parse_args():
         help=(
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
+    )
+    parser.add_argument(
+        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
     )
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
@@ -230,14 +415,11 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--mixed_precision",
-        type=str,
-        default=None,
-        choices=["no", "fp16", "bf16"],
+        "--allow_tf32",
+        action="store_true",
         help=(
-            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
-            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
+            "Whether or not to allow TF32 on Ampere GPUs. This can speed up training on Ampere GPUs and is only used"
+            " in mixed precision training."
         ),
     )
     parser.add_argument(
@@ -249,35 +431,91 @@ def parse_args():
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
     )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument(
-        "--checkpointing_steps",
-        type=int,
-        default=500,
+        "--mixed_precision",
+        type=str,
+        default=None,
+        choices=["no", "fp16", "bf16"],
         help=(
-            "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
-            " training using `--resume_from_checkpoint`."
+            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
+            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
+            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
         ),
     )
     parser.add_argument(
-        "--checkpoints_total_limit",
-        type=int,
+        "--prediction_type",
+        type=str,
         default=None,
-        help=("Max number of checkpoints to store."),
+        choices=["epsilon", "sample", "v_prediction"],
+        help="The prediction_type that shall be used for training. Choose between 'epsilon' or 'v_prediction' or leave `None`. If left to `None` the prediction_type will happen automatically to be 'v_prediction' for `DDPM` and `epsilon` for `DDIM`.",
     )
+    parser.add_argument("--snr_gamma", type=float, default=None, help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. More details here: https://arxiv.org/abs/2303.09556.")
+    parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA model.")
     parser.add_argument(
-        "--resume_from_checkpoint",
+        "--non_ema_revision",
         type=str,
         default=None,
         help=(
-            "Whether training should be resumed from a previous checkpoint. Use a path saved by"
-            ' `--checkpointing_steps`, or `"latest"` to automatically select the last available checkpoint.'
+            "Revision of pretrained non-ema model identifier. Must be a branch, tag or git identifier of the local or"
+            " remote repository specified with --pretrained_model_name_or_path."
         ),
     )
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xFormers."
     )
-    parser.add_argument("--noise_offset", type=float, default=0, help="The scale of noise offset.")
+    parser.add_argument(
+        "--use_peft",
+        action="store_true",
+        help="Whether or not to use PEFT (Parameter Efficient Fine-Tuning) methods to train the model.",
+    )
+    parser.add_argument(
+        "--lora_r",
+        type=int,
+        default=16,
+        help="The rank of the LoRA adapter.",
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=32,
+        help="The alpha parameter for the LoRA adapter.",
+    )
+    parser.add_argument(
+        "--lora_dropout",
+        type=float,
+        default=0.0,
+        help="The dropout probability for the LoRA adapter.",
+    )
+    parser.add_argument(
+        "--lora_bias",
+        type=str,
+        default="none",
+        help="The bias type for the LoRA adapter.",
+    )
+    parser.add_argument(
+        "--lora_text_encoder_r",
+        type=int,
+        default=16,
+        help="The rank of the LoRA adapter for the text encoder.",
+    )
+    parser.add_argument(
+        "--lora_text_encoder_alpha",
+        type=int,
+        default=32,
+        help="The alpha parameter for the LoRA adapter for the text encoder.",
+    )
+    parser.add_argument(
+        "--lora_text_encoder_dropout",
+        type=float,
+        default=0.0,
+        help="The dropout probability for the LoRA adapter for the text encoder.",
+    )
+    parser.add_argument(
+        "--lora_text_encoder_bias",
+        type=str,
+        default="none",
+        help="The bias type for the LoRA adapter for the text encoder.",
+    )
     parser.add_argument(
         "--validation_epochs",
         type=int,
@@ -289,15 +527,9 @@ def parse_args():
         type=str,
         default="text2image-fine-tune",
         help=(
-            "The `project_name` argument passed to Accelerator.init_trackers for"
-            " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
+            "The `project_name` argument passed to Accelerator.init_trackers for more information see"
+            " https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
-    )
-    parser.add_argument(
-        "--prediction_type",
-        type=str,
-        default=None,
-        help="The prediction_type that shall be used for training. Choose between 'epsilon' or 'v_prediction' or leave `None`. If left to `None` the default prediction type of the scheduler: `noise_scheduler.config.prediction_type` is chosen.",
     )
     parser.add_argument(
         "--cfg",
@@ -312,19 +544,133 @@ def parse_args():
         help="Total number of diffusion steps.",
     )
     parser.add_argument(
+        "--use_reg",
+        action="store_true",
+        help="Use regularization.",
+    )
+    parser.add_argument(
         "--use_huber",
         action="store_true",
-        help="Whether to use Huber loss.",
+        help="Use Huber loss.",
     )
     parser.add_argument(
         "--use_separate",
         action="store_true",
-        help="Whether to use separate noise intervals.",
+        help="Use separate noise intervals.",
     )
     parser.add_argument(
-        "--use_reg",
+        "--enable_tiling",
         action="store_true",
-        help="Whether to use regularization.",
+        help="Enable tiling for VAE.",
+    )
+    parser.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Path to pretrained model weights.",
+    )
+    parser.add_argument(
+        "--log_interval",
+        type=int,
+        default=10,
+        help="Log interval for training.",
+    )
+    parser.add_argument(
+        "--offload_ema",
+        action="store_true",
+        help="Offload EMA model to CPU.",
+    )
+    parser.add_argument(
+        "--rf_scheduler",
+        action="store_true",
+        help="Use RF scheduler.",
+    )
+    parser.add_argument(
+        "--noise_offset",
+        type=float,
+        default=0.0,
+        help="Noise offset for training.",
+    )
+    parser.add_argument(
+        "--weighting_scheme",
+        type=str,
+        default="uniform",
+        help="Weighting scheme for loss.",
+    )
+    parser.add_argument(
+        "--logit_mean",
+        type=float,
+        default=0.0,
+        help="Logit mean for timestep sampling.",
+    )
+    parser.add_argument(
+        "--logit_std",
+        type=float,
+        default=1.0,
+        help="Logit std for timestep sampling.",
+    )
+    parser.add_argument(
+        "--mode_scale",
+        type=float,
+        default=1.0,
+        help="Mode scale for timestep sampling.",
+    )
+    parser.add_argument(
+        "--enable_tiling",
+        action="store_true",
+        help="Enable tiling for VAE.",
+    )
+    parser.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Path to pretrained model weights.",
+    )
+    parser.add_argument(
+        "--log_interval",
+        type=int,
+        default=10,
+        help="Log interval for training.",
+    )
+    parser.add_argument(
+        "--offload_ema",
+        action="store_true",
+        help="Offload EMA model to CPU.",
+    )
+    parser.add_argument(
+        "--rf_scheduler",
+        action="store_true",
+        help="Use RF scheduler.",
+    )
+    parser.add_argument(
+        "--noise_offset",
+        type=float,
+        default=0.0,
+        help="Noise offset for training.",
+    )
+    parser.add_argument(
+        "--weighting_scheme",
+        type=str,
+        default="uniform",
+        help="Weighting scheme for loss.",
+    )
+    parser.add_argument(
+        "--logit_mean",
+        type=float,
+        default=0.0,
+        help="Logit mean for timestep sampling.",
+    )
+    parser.add_argument(
+        "--logit_std",
+        type=float,
+        default=1.0,
+        help="Logit std for timestep sampling.",
+    )
+    parser.add_argument(
+        "--mode_scale",
+        type=float,
+        default=1.0,
+        help="Mode scale for timestep sampling.",
     )
 
     args = parser.parse_args()

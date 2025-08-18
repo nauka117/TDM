@@ -108,12 +108,24 @@ def save_validation_images(unet, noise_scheduler, vae, text_encoder, tokenizer, 
                           fixed_c, fixed_mask, fixed_noise, fixed_T, global_step, output_dir):
     """Save validation images during training"""
     with torch.no_grad():
-        fixed_latents = generate_new(unet, noise_scheduler, fixed_noise, fixed_noise, fixed_c, fixed_mask, steps=4, total_steps=args.total_steps)
-        fixed_latents_1step = generate_new(unet, noise_scheduler, fixed_noise, fixed_noise, fixed_c, fixed_mask, steps=1, total_steps=args.total_steps)
+        fixed_latents = generate_new(unet, noise_scheduler, fixed_noise, fixed_noise, fixed_c, fixed_mask, 
+                                    steps=4, total_steps=args.total_steps, use_opensora=True)
+        fixed_latents_1step = generate_new(unet, noise_scheduler, fixed_noise, fixed_noise, fixed_c, fixed_mask, 
+                                          steps=1, total_steps=args.total_steps, use_opensora=True)
+        
+        # Open-Sora: Handle 3D VAE
         images_noise = vae.decode(fixed_latents[:4].to(vae.dtype) / vae.config.scaling_factor, return_dict=False)[0]
         images_fixed1 = vae.decode(fixed_latents_1step[:4].to(vae.dtype) / vae.config.scaling_factor, return_dict=False)[0].clamp(-1, 1) * 0.5 + 0.5
         images_4step = vae.decode(fixed_latents.to(vae.dtype) / vae.config.scaling_factor, return_dict=False)[0].clamp(-1,1)*0.5+0.5
-        images_noise = images_noise.clamp(-1, 1) * 0.5 + 0.5                    
+        images_noise = images_noise.clamp(-1, 1) * 0.5 + 0.5
+        
+        # For video, save first frame as image
+        if len(images_fixed1.shape) == 5:  # [B, T, C, H, W]
+            images_fixed1 = images_fixed1[:, 0]  # Take first frame
+        if len(images_noise.shape) == 5:
+            images_noise = images_noise[:, 0]
+        if len(images_4step.shape) == 5:
+            images_4step = images_4step[:, 0]
         
         if accelerator.is_main_process:
             save_image(images_fixed1, f'./{output_dir}/fixed_1step_{global_step}.jpg', normalize=False, nrow=2)

@@ -43,16 +43,23 @@ from transformers.utils import ContextManagers
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, LCMScheduler, StableDiffusionPipeline, UNet2DConditionModel, AutoencoderTiny, Transformer2DModel
+from diffusers import AutoencoderKL, DDPMScheduler, LCMScheduler, StableDiffusionPipeline, UNet2DConditionModel, AutoencoderTiny, Transformer2DModel, DPMSolverMultistepScheduler, FlowMatchEulerDiscreteScheduler
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel
+from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
+from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
 
 import torch as th
 from torch import nn
 import math
+
+# Open-Sora imports
+from opensora.models.causalvideovae import ae_stride_config, ae_channel_config, ae_wrapper
+from opensora.models.text_encoder import get_text_warpper
+from opensora.models.diffusion import Diffusion_models
+from opensora.utils.utils import explicit_uniform_sampling
 
 # Import our modules
 from .args import parse_args
@@ -128,11 +135,18 @@ def main():
             ).repo_id
 
     # Load scheduler, tokenizer and models.
-
-    noise_scheduler = DDPMScheduler(beta_start = 0.0001, beta_end =  0.02, beta_schedule = "linear",
-                                    steps_offset = 1,trained_betas = None, clip_sample = False, rescale_betas_zero_snr = False)
-    noise_scheduler.config.prediction_type = 'epsilon'
-    # noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    
+    # Open-Sora configuration
+    noise_scheduler = DPMSolverMultistepScheduler()
+    noise_scheduler_copy = DPMSolverMultistepScheduler()
+    
+    # Calculate latent dimensions for Open-Sora
+    ae_stride_t, ae_stride_h, ae_stride_w = ae_stride_config[args.ae]
+    latent_size = (args.max_height // ae_stride_h, args.max_width // ae_stride_w)
+    latent_size_t = (args.num_frames - 1) // ae_stride_t + 1
+    channels = ae_channel_config[args.ae]
+    
+    # Create noise schedules for Open-Sora
     alpha_schedule = torch.sqrt(noise_scheduler.alphas_cumprod)
     sigma_schedule = torch.sqrt(1 - noise_scheduler.alphas_cumprod)
     alpha_schedule = alpha_schedule.to(accelerator.device).to(torch.float16)
@@ -158,31 +172,94 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder = T5EncoderModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", torch_dtype = torch.float16
-        )
-        tokenizer = T5Tokenizer.from_pretrained(
-        "PixArt-alpha/PixArt-XL-2-512x512", subfolder="tokenizer",)
-        vae = AutoencoderTiny.from_pretrained("madebyollin/taesd", )
+        # Open-Sora models
+        kwargs = {}
+        ae = ae_wrapper[args.ae](args.ae_path, cache_dir=args.cache_dir, **kwargs).eval()
+        
+        if args.enable_tiling:
+            ae.vae.enable_tiling()
 
-    unet = Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
+        kwargs = {
+            'torch_dtype': weight_dtype, 
+            'low_cpu_mem_usage': False
+        }
+        text_enc_1 = get_text_warpper(args.text_encoder_name_1)(args, **kwargs).eval()
+        text_enc_2 = None
+        if args.text_encoder_name_2 is not None:
+            text_enc_2 = get_text_warpper(args.text_encoder_name_2)(args, **kwargs).eval()
+        
+        # Create Open-Sora diffusion model
+        model = Diffusion_models[args.model](
+            in_channels=ae_channel_config[args.ae],
+            out_channels=ae_channel_config[args.ae],
+            sample_size_h=latent_size,
+            sample_size_w=latent_size,
+            sample_size_t=latent_size_t,
+            interpolation_scale_h=args.interpolation_scale_h,
+            interpolation_scale_w=args.interpolation_scale_w,
+            interpolation_scale_t=args.interpolation_scale_t,
+            sparse1d=args.sparse1d, 
+            sparse_n=args.sparse_n, 
+            skip_connection=args.skip_connection, 
         )
-    for param in unet.parameters(): 
-        param.data = param.data.contiguous()
-
-    unet_fake = Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
+        
+        # Load pretrained weights if specified
+        if args.pretrained:
+            model_state_dict = model.state_dict()
+            print(f'Load from {args.pretrained}')
+            if args.pretrained.endswith('.safetensors'):  
+                from safetensors.torch import load_file as safe_load
+                pretrained_checkpoint = safe_load(args.pretrained, device="cpu")
+            else:
+                pretrained_checkpoint = torch.load(args.pretrained, map_location="cpu")
+            
+            pretrained_keys = set(list(pretrained_checkpoint.keys()))
+            model_keys = set(list(model_state_dict.keys()))
+            missing_keys = model_keys - pretrained_keys
+            unexpected_keys = pretrained_keys - model_keys
+            
+            if len(missing_keys) > 0:
+                print(f"Missing keys: {missing_keys}")
+            if len(unexpected_keys) > 0:
+                print(f"Unexpected keys: {unexpected_keys}")
+            
+            model.load_state_dict(pretrained_checkpoint, strict=False)
+        
+        # Create fake model for TDM
+        model_fake = Diffusion_models[args.model](
+            in_channels=ae_channel_config[args.ae],
+            out_channels=ae_channel_config[args.ae],
+            sample_size_h=latent_size,
+            sample_size_w=latent_size,
+            sample_size_t=latent_size_t,
+            interpolation_scale_h=args.interpolation_scale_h,
+            interpolation_scale_w=args.interpolation_scale_w,
+            interpolation_scale_t=args.interpolation_scale_t,
+            sparse1d=args.sparse1d, 
+            sparse_n=args.sparse_n, 
+            skip_connection=args.skip_connection, 
         )
-    unet.enable_xformers_memory_efficient_attention()
-    unet_fake.enable_xformers_memory_efficient_attention()
-    # Freeze vae and text_encoder and set unet to trainable
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    # unet.requires_grad_(False)
-    unet_fake.requires_grad_(False)
-    unet.train()
-    unet_fake.train()
+        
+        # Enable optimizations
+        if hasattr(model, 'enable_xformers_memory_efficient_attention'):
+            model.enable_xformers_memory_efficient_attention()
+        if hasattr(model_fake, 'enable_xformers_memory_efficient_attention'):
+            model_fake.enable_xformers_memory_efficient_attention()
+        
+        # Set trainable states
+        ae.requires_grad_(False)
+        text_enc_1.requires_grad_(False)
+        if text_enc_2 is not None:
+            text_enc_2.requires_grad_(False)
+        model_fake.requires_grad_(False)
+        model.train()
+        model_fake.train()
+        
+        # Store for later use
+        vae = ae
+        text_encoder = [text_enc_1, text_enc_2] if text_enc_2 is not None else [text_enc_1]
+        unet = model
+        unet_fake = model_fake
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -440,7 +517,9 @@ def main():
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet, unet_fake):
                 text_ = list(batch[0])
-                noise = torch.randn([len(text_), 4, 64, 64]).to(torch.float16).to(accelerator.device)
+                
+                # Open-Sora: 3D tensors [B, C, T, H, W]
+                noise = torch.randn([len(text_), channels, latent_size_t, latent_size[0], latent_size[1]]).to(torch.float16).to(accelerator.device)
                 latents = noise
 
                 # Get the target for loss depending on the prediction type
@@ -456,13 +535,25 @@ def main():
                 # Get the text embedding for conditioning
                 # input_ids = batch[1]  # .to(weight_dtype)
                 with torch.no_grad():
-                    input_ids = batch[1].view(batch[1].shape[0],-1)#.input_ids#.to(weight_dtype)
-                    prompt_attention_mask = batch[2].view(batch[1].shape[0],-1)#.attention_mask
-                    encoder_hidden_states = text_encoder(input_ids, return_dict=False, attention_mask=prompt_attention_mask)[0]
+                    # Open-Sora: Handle multiple text encoders
+                    input_ids = batch[1].view(batch[1].shape[0],-1)
+                    prompt_attention_mask = batch[2].view(batch[1].shape[0],-1)
+                    
+                    # Process with first text encoder (T5)
+                    encoder_hidden_states_1 = text_encoder[0](input_ids, return_dict=False, attention_mask=prompt_attention_mask)[0]
+                    
+                    # Process with second text encoder (CLIP) if available
+                    if len(text_encoder) > 1 and text_encoder[1] is not None:
+                        encoder_hidden_states_2 = text_encoder[1](input_ids, return_dict=False, attention_mask=prompt_attention_mask)[0]
+                        encoder_hidden_states = [encoder_hidden_states_1, encoder_hidden_states_2]
+                    else:
+                        encoder_hidden_states = encoder_hidden_states_1
                     
                 
                 with torch.no_grad():
-                    imgs_list, noisy_imgs_list = generate_new(unet,noise_scheduler,noise, noise,encoder_hidden_states, prompt_attention_mask, steps = 4, return_mid = True, total_steps = args.total_steps) # [ [bs,4,64,64] * K ]
+                    imgs_list, noisy_imgs_list = generate_new(unet, noise_scheduler, noise, noise, encoder_hidden_states, prompt_attention_mask, 
+                                                             steps=4, return_mid=True, total_steps=args.total_steps, 
+                                                             use_opensora=True)
                     noisy_imgs_list.reverse()
                 
                 fw_t = 240
@@ -543,7 +634,9 @@ def main():
                     if fixed_c is None:
                         fixed_c = fixed_prompt_embeds.to(torch.float16).to(accelerator.device)
                         fixed_mask = fixed_mask.to(torch.float16).to(accelerator.device)
-                        fixed_noise = torch.randn([4, 4, 64, 64]).to(torch.float16).to(accelerator.device)
+                        
+                        # Open-Sora: 3D tensors [B, C, T, H, W]
+                        fixed_noise = torch.randn([4, channels, latent_size_t, latent_size[0], latent_size[1]]).to(torch.float16).to(accelerator.device)
                         fixed_T = T
                     save_validation_images(unet, noise_scheduler, vae, text_encoder, tokenizer, args, accelerator, 
                                           fixed_c, fixed_mask, fixed_noise, fixed_T, global_step, args.output_dir)

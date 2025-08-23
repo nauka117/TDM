@@ -99,7 +99,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
                 import numpy as np
                 # Convert video frames to numpy for logging
                 np_student = np.stack([np.asarray(frame) for frame in student_video[:4]])  # First 4 frames
-                np_teacher = np.stack([np.asarray(frame) for frame in teacher_video[:4])
+                np_teacher = np.stack([np.asarray(frame) for frame in teacher_video[:4]])
                 np_videos = np.concatenate([np_student, np_teacher], axis=0)
                 tracker.writer.add_images("validation", np_videos, epoch, dataformats="NHWC")
                 

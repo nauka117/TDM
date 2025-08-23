@@ -58,7 +58,7 @@ import math
 # Open-Sora imports
 from opensora.models.causalvideovae import ae_stride_config, ae_channel_config, ae_wrapper
 from opensora.models.text_encoder import get_text_warpper
-from opensora.models.diffusion import Diffusion_models
+from opensora.models.diffusion import Diffusion_models, Diffusion_models_class
 from opensora.utils.utils import explicit_uniform_sampling
 
 # Import our modules
@@ -102,14 +102,11 @@ def main():
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        split_batches=True,
+        kwargs_handlers=[diffusers.utils.DeprecationWarning()],
     )
 
     # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -123,75 +120,51 @@ def main():
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
-    import torch
+
     # Handle the repository creation
     if accelerator.is_main_process:
+        if args.push_to_hub:
+            if args.hub_token is None:
+                raise ValueError("Need an `hub_token` to push to hub when `--push_to_hub` is passed.")
+            create_repo(
+                repo_id=args.hub_model_id or args.output_dir,
+                exist_ok=True,
+                token=args.hub_token,
+            ).repo_id
+
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
-            ).repo_id
-
     # Load scheduler, tokenizer and models.
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    tokenizer = T5Tokenizer.from_pretrained(args.text_encoder_name_1, subfolder="tokenizer", use_fast=False)
+
+    # Open-Sora: Initialize VAE
+    ae = ae_wrapper[args.ae](args.ae_path)
     
-    # Open-Sora configuration
-    noise_scheduler = DPMSolverMultistepScheduler()
-    noise_scheduler_copy = DPMSolverMultistepScheduler()
-    
-    # Calculate latent dimensions for Open-Sora
-    ae_stride_t, ae_stride_h, ae_stride_w = ae_stride_config[args.ae]
-    latent_size = (args.max_height // ae_stride_h, args.max_width // ae_stride_w)
-    latent_size_t = (args.num_frames - 1) // ae_stride_t + 1
+    # Open-Sora: Initialize text encoders
+    text_enc_1 = get_text_warpper(args.text_encoder_name_1)(args.text_encoder_name_1)
+    text_enc_2 = None
+    if args.text_encoder_name_2:
+        text_enc_2 = get_text_warpper(args.text_encoder_name_2)(args.text_encoder_name_2)
+
+    # Open-Sora: Get VAE configuration
+    latent_size = args.max_height // 8  # VAE downsampling factor
+    latent_size_t = args.num_frames // ae_stride_config[args.ae][0]  # Temporal downsampling
     channels = ae_channel_config[args.ae]
-    
-    # Create noise schedules for Open-Sora
-    alpha_schedule = torch.sqrt(noise_scheduler.alphas_cumprod)
-    sigma_schedule = torch.sqrt(1 - noise_scheduler.alphas_cumprod)
-    alpha_schedule = alpha_schedule.to(accelerator.device).to(torch.float16)
-    sigma_schedule = sigma_schedule.to(accelerator.device).to(torch.float16)
 
-    def deepspeed_zero_init_disabled_context_manager():
-        """
-        returns either a context list that includes one that will disable zero.Init or an empty context list
-        """
-        deepspeed_plugin = AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
-        if deepspeed_plugin is None:
-            return []
-
-        return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
-
-    # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
-    # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
-    # will try to assign the same optimizer with the same weights to all models during
-    # `deepspeed.initialize`, which of course doesn't work.
-    #
-    # For now the following workaround will partially support Deepspeed ZeRO-3, by excluding the 2
-    # frozen models from being partitioned during `zero.Init` which gets called during
-    # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
-    # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
-    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        # Open-Sora models
-        kwargs = {}
-        ae = ae_wrapper[args.ae](args.ae_path, cache_dir=args.cache_dir, **kwargs).eval()
-        
-        if args.enable_tiling:
-            ae.vae.enable_tiling()
-
-        kwargs = {
-            'torch_dtype': weight_dtype, 
-            'low_cpu_mem_usage': False
-        }
-        text_enc_1 = get_text_warpper(args.text_encoder_name_1)(args, **kwargs).eval()
-        text_enc_2 = None
-        if args.text_encoder_name_2 is not None:
-            text_enc_2 = get_text_warpper(args.text_encoder_name_2)(args, **kwargs).eval()
-        
-        # Create Open-Sora diffusion model
+    # Open-Sora: Initialize diffusion model (DiT)
+    if args.model in Diffusion_models_class:
+        model = Diffusion_models_class[args.model].from_pretrained(
+            args.ae_path,
+            subfolder="model",
+            cache_dir=args.cache_dir
+        )
+    else:
+        # Fallback to direct instantiation
         model = Diffusion_models[args.model](
-            in_channels=ae_channel_config[args.ae],
-            out_channels=ae_channel_config[args.ae],
+            in_channels=channels,
+            out_channels=channels,
             sample_size_h=latent_size,
             sample_size_w=latent_size,
             sample_size_t=latent_size_t,
@@ -227,8 +200,8 @@ def main():
         
         # Create fake model for TDM
         model_fake = Diffusion_models[args.model](
-            in_channels=ae_channel_config[args.ae],
-            out_channels=ae_channel_config[args.ae],
+            in_channels=channels,
+            out_channels=channels,
             sample_size_h=latent_size,
             sample_size_w=latent_size,
             sample_size_t=latent_size_t,
@@ -301,7 +274,7 @@ def main():
     )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
+    # or specify a Dataset from the hub (the dataset will be automatically downloaded from the datasets Hub).
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
@@ -311,7 +284,7 @@ def main():
             args.dataset_name,
             args.dataset_config_name,
             cache_dir=args.cache_dir,
-            data_dir=args.train_data_dir,
+            data_files=args.train_data_dir,
         )
     else:
         data_files = {}
@@ -325,55 +298,31 @@ def main():
         # See more about loading custom images at
         # https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder
 
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-    column_names = dataset["train"].column_names
-
-    # 6. Get the column names for input/target.
-    dataset_columns = ["text"]
-    if len(column_names) >= 2:
-        # get the column names for the text/timestamp columns.
-        dataset_columns = column_names[:2]
-    else:
-        dataset_columns = column_names
-
-    def tokenize_captions(examples, is_train=True):
-        captions = []
-        for caption in examples[dataset_columns[0]]:
-            if isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
-            else:
-                raise ValueError(
-                    f"Caption column `{dataset_columns[0]}` should contain either strings or lists of strings."
-                )
-        inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-        )
-        return inputs
-
-    train_dataset = dataset["train"]
-    print(f"Loaded {len(train_dataset)} training examples")
-
-    # Preprocessing the datasets.
-    train_dataset = train_dataset.map(
-        function=tokenize_captions,
-        fn_kwargs={"is_train": True},
-        batched=True,
-        num_proc=args.dataloader_num_workers,
-        remove_columns=[col for col in column_names if col != dataset_columns[0]],
-        desc="Running tokenizer on train dataset",
+    # Preprocessing the datasets and DataLoaders creation.
+    augmentations = transforms.Compose(
+        [
+            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),
+        ]
     )
 
-    def collate_fn(examples):
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        attention_mask = torch.stack([example["attention_mask"] for example in examples])
-        return input_ids, attention_mask
+    def transform_images(examples):
+        images = [augmentations(image.convert("RGB")) for image in examples["image"]]
+        return {"input": images}
 
+    if args.train_data_dir:
+        dataset["train"].set_transform(transform_images)
+
+    def collate_fn(examples):
+        images = torch.stack([example["input"] for example in examples])
+        return images
+
+    # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
+        dataset["train"],
         shuffle=True,
         collate_fn=collate_fn,
         batch_size=args.train_batch_size,
@@ -392,27 +341,31 @@ def main():
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+        num_cycles=args.lr_num_cycles,
+        power=args.lr_power,
     )
 
     # Prepare everything with our `accelerator`.
-    unet, unet_fake, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, unet_fake, optimizer, train_dataloader, lr_scheduler
+    unet, optimizer, lr_scheduler, train_dataloader = accelerator.prepare(
+        unet, optimizer, lr_scheduler, train_dataloader
     )
 
     if args.use_ema:
         ema_unet.to(accelerator.device)
 
-    # For these 2 training scripts, we need to cast it back.
-    # because we can't customize the DDPOroulette
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping the weights in full precision is not required.
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
-    # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
+    # Move text encoders and VAE to GPU and cast to weight_dtype
+    ae.to(accelerator.device, dtype=weight_dtype)
+    text_enc_1.to(accelerator.device, dtype=weight_dtype)
+    if text_enc_2 is not None:
+        text_enc_2.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -424,35 +377,26 @@ def main():
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers(args.tracker_project_name, config=vars(args))
+        accelerator.init_trackers("text2image-fine-tune", config=vars(args))
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(dataset)}")
+    logger.info(f"  Num examples = {len(dataset['train'])}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    # Only show the progress bar once on the main process.
+    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    progress_bar.set_description("Steps")
+
     global_step = 0
     first_epoch = 0
 
-    from copy import deepcopy
-    # unet_sd = deepcopy(unet)
-    unet_sd = Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
-        )
-    unet_sd.eval()
-    unet_sd.requires_grad_(False)
-    unet_sd.enable_xformers_memory_efficient_attention()
-    unet_sd.requires_grad_(False)
-    unet_sd = accelerator.prepare_model(unet_sd)
-    unet_sd.requires_grad_(False)
-
     # Potentially load in the weights and states from a previous save
-    print(args.resume_from_checkpoint)
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
             path = os.path.basename(args.resume_from_checkpoint)
@@ -473,45 +417,53 @@ def main():
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             global_step = int(path.split("-")[1])
-
             initial_global_step = global_step
             first_epoch = global_step // num_update_steps_per_epoch
 
+    # Open-Sora: Initialize teacher model (SD) for TDM
+    if args.use_sd_teacher:
+        # Load Stable Diffusion teacher model
+        from diffusers import StableDiffusionPipeline
+        teacher_pipeline = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            torch_dtype=weight_dtype
+        ).to(accelerator.device)
+        unet_sd = teacher_pipeline.unet
+        unet_sd.requires_grad_(False)
+        unet_sd.eval()
     else:
-        initial_global_step = 0
+        unet_sd = None
 
-    progress_bar = tqdm(
-        range(0, args.max_train_steps),
-        initial=initial_global_step,
-        desc="Steps",
-        disable=not accelerator.is_local_main_process,
-    )
-
-    from copy import deepcopy
-    import torch.nn.functional as F
-
-    with torch.no_grad():
+    # Open-Sora: Prepare unconditional embeddings for CFG
+    if args.cfg > 1:
         uncond_input = tokenizer(
             [""] * args.train_batch_size,
             return_tensors="pt",
             padding="max_length", max_length=120
         ).to(accelerator.device)
-        uncond_attention_mask = uncond_input.attention_mask.to(torch.float16)
-        uncond_prompt_embeds = text_encoder(uncond_input.input_ids, return_dict=False, attention_mask=uncond_input.attention_mask)[0]
+        uncond_attention_mask = uncond_input.attention_mask.to(weight_dtype)
+        uncond_prompt_embeds = text_enc_1(uncond_input.input_ids, return_dict=False, attention_mask=uncond_input.attention_mask)[0]
         fixed_input = tokenizer(
             ["A photo of a cat", "A photo of a dog", "A photo of a panda", "A photo of a pikachu"],
             return_tensors="pt",
             padding="max_length", max_length=120
         ).to(accelerator.device)
-        fixed_prompt_embeds = text_encoder(fixed_input.input_ids, return_dict=False, attention_mask=fixed_input.attention_mask)[0]
-        fixed_mask = fixed_input.attention_mask.to(torch.float16)
+        fixed_prompt_embeds = text_enc_1(fixed_input.input_ids, return_dict=False, attention_mask=fixed_input.attention_mask)[0]
+        fixed_mask = fixed_input.attention_mask.to(weight_dtype)
         add_cfg = {"uncond_attention_mask": uncond_attention_mask[:fixed_mask.shape[0]], "uncond_prompt_embeds": uncond_prompt_embeds[:fixed_mask.shape[0]], 'cfg': 7.5}
 
-    predictor = Predictor(noise_scheduler, alpha_schedule, sigma_schedule, uncond_prompt_embeds, uncond_attention_mask)
+    # Open-Sora: Initialize predictor for TDM
+    alpha_schedule = torch.sqrt(noise_scheduler.alphas_cumprod).to(accelerator.device).to(weight_dtype)
+    sigma_schedule = torch.sqrt(1 - noise_scheduler.alphas_cumprod).to(accelerator.device).to(weight_dtype)
+    
+    if unet_sd is not None:
+        predictor = Predictor(noise_scheduler, alpha_schedule, sigma_schedule, uncond_prompt_embeds, uncond_attention_mask)
 
     fixed_noise = None
     fixed_c = None
     total_steps = args.total_steps
+    
+    # Open-Sora: Main training loop
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0    
         for step, batch in enumerate(train_dataloader):
@@ -519,7 +471,7 @@ def main():
                 text_ = list(batch[0])
                 
                 # Open-Sora: 3D tensors [B, C, T, H, W]
-                noise = torch.randn([len(text_), channels, latent_size_t, latent_size[0], latent_size[1]]).to(torch.float16).to(accelerator.device)
+                noise = torch.randn([len(text_), channels, latent_size_t, latent_size, latent_size]).to(weight_dtype).to(accelerator.device)
                 latents = noise
 
                 # Get the target for loss depending on the prediction type
@@ -527,20 +479,19 @@ def main():
                     # set prediction_type of scheduler if defined
                     noise_scheduler.register_to_config(prediction_type=args.prediction_type)
     
-                # noise = torch.randn_like(latents)
                 new_noise = torch.randn_like(noise)
                 bsz = noise.shape[0]
                 # Sample a random timestep for each image
                 T = torch.randint(total_steps - 1, total_steps, (bsz,), device=noise.device).long()
+                
                 # Get the text embedding for conditioning
-                # input_ids = batch[1]  # .to(weight_dtype)
                 with torch.no_grad():
                     # Open-Sora: Handle multiple text encoders
                     input_ids = batch[1].view(batch[1].shape[0],-1)
                     prompt_attention_mask = batch[2].view(batch[1].shape[0],-1)
                     
                     # Process with first text encoder (T5)
-                    encoder_hidden_states_1 = text_encoder[0](input_ids, return_dict=False, attention_mask=prompt_attention_mask)[0]
+                    encoder_hidden_states_1 = text_enc_1(input_ids, return_dict=False, attention_mask=prompt_attention_mask)[0]
                     
                     # Process with second text encoder (CLIP) if available
                     if len(text_encoder) > 1 and text_encoder[1] is not None:
@@ -568,9 +519,15 @@ def main():
                         t_fake = torch.randint(fw_t, total_steps, (bsz,), device=noise.device).long()
                     noise_fake = torch.randn_like(noise)
                     latents_fake = predictor.add_noise(noisy_imgs_list[ind_t], noise_fake, ind_t * total_steps // 4, t_fake)
-                    added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
-                    noise_pred_fake = unet_fake(latents_fake, timestep=t_fake, added_cond_kwargs=added_cond_kwargs,
-                                                encoder_hidden_states=encoder_hidden_states_fake, encoder_attention_mask=prompt_attention_mask, return_dict=False)[0]
+                    
+                    # Open-Sora: Prepare model kwargs for DiT
+                    model_kwargs = {
+                        "encoder_hidden_states": encoder_hidden_states_fake,
+                        "attention_mask": None,  # Open-Sora doesn't use this
+                        "encoder_attention_mask": prompt_attention_mask,
+                    }
+                    
+                    noise_pred_fake = unet_fake(latents_fake, timestep=t_fake, **model_kwargs, return_dict=False)[0]
                     noise_pred_fake = noise_pred_fake.chunk(2, dim=1)[0]
                     fake_latents = predicted_origin(noise_pred_fake,
                                                     t_fake,
@@ -581,7 +538,7 @@ def main():
                     fake_latents = fake_latents.detach().clone()
                     fake_latents_uncond = fake_latents
                     if args.cfg > 1:
-                        noise_pred_fake_uncond = unet_fake(latents_fake, timestep=t_fake, added_cond_kwargs=added_cond_kwargs,
+                        noise_pred_fake_uncond = unet_fake(latents_fake, timestep=t_fake, **model_kwargs,
                                                             encoder_hidden_states=uncond_prompt_embeds, encoder_attention_mask=uncond_attention_mask, return_dict=False)[0]
                         noise_pred_fake_uncond = noise_pred_fake_uncond.chunk(2, dim=1)[0]
                         fake_latents_uncond = predicted_origin(noise_pred_fake_uncond,
@@ -596,10 +553,22 @@ def main():
                 unet_fake.requires_grad_(False)
                 unet.requires_grad_(True)
                 with torch.no_grad():
-                    sd_latents, sd_latents_uncond = predictor.predict(unet_sd, fake_latents, t_fake, encoder_hidden_states, prompt_attention_mask, cfg=args.cfg, steps=1, return_double=True)
-                    sd_latents = sd_latents.detach().clone()
-                    sd_latents_uncond = sd_latents_uncond.detach().clone()
+                    if unet_sd is not None:
+                        sd_latents, sd_latents_uncond = predictor.predict(unet_sd, fake_latents, t_fake, encoder_hidden_states, prompt_attention_mask, cfg=args.cfg, steps=1, return_double=True)
+                        sd_latents = sd_latents.detach().clone()
+                        sd_latents_uncond = sd_latents_uncond.detach().clone()
+                    else:
+                        # Use fake model as teacher if no SD teacher
+                        sd_latents = fake_latents
+                        sd_latents_uncond = fake_latents_uncond
 
+                # Open-Sora: Predict with student model
+                model_kwargs = {
+                    "encoder_hidden_states": encoder_hidden_states,
+                    "attention_mask": None,
+                    "encoder_attention_mask": prompt_attention_mask,
+                }
+                
                 model_latents, _ = predictor.predict(unet, fake_latents, t_fake, encoder_hidden_states, prompt_attention_mask, cfg=args.cfg, steps=1)
 
                 if args.cfg > 1:
@@ -632,11 +601,11 @@ def main():
             if accelerator.sync_gradients:
                 if global_step % 50 == 0:
                     if fixed_c is None:
-                        fixed_c = fixed_prompt_embeds.to(torch.float16).to(accelerator.device)
-                        fixed_mask = fixed_mask.to(torch.float16).to(accelerator.device)
+                        fixed_c = fixed_prompt_embeds.to(weight_dtype).to(accelerator.device)
+                        fixed_mask = fixed_mask.to(weight_dtype).to(accelerator.device)
                         
                         # Open-Sora: 3D tensors [B, C, T, H, W]
-                        fixed_noise = torch.randn([4, channels, latent_size_t, latent_size[0], latent_size[1]]).to(torch.float16).to(accelerator.device)
+                        fixed_noise = torch.randn([4, channels, latent_size_t, latent_size, latent_size]).to(weight_dtype).to(accelerator.device)
                         fixed_T = T
                     save_validation_images(unet, noise_scheduler, vae, text_encoder, tokenizer, args, accelerator, 
                                           fixed_c, fixed_mask, fixed_noise, fixed_T, global_step, args.output_dir)
